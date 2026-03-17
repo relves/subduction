@@ -287,7 +287,6 @@ impl Storage<Sendable> for FsStorage {
             let blob_data = verified.blob().contents().clone();
             let blob_temp = blob_path.with_extension("blob.tmp");
             let signed_temp = signed_path.with_extension("signed.tmp");
-
             tokio::fs::write(&blob_temp, &blob_data).await?;
             tokio::fs::write(&signed_temp, &signed_data).await?;
             tokio::fs::rename(&blob_temp, &blob_path).await?;
@@ -328,13 +327,17 @@ impl Storage<Sendable> for FsStorage {
                 Err(e) => {
                     let raw = tokio::fs::read(&signed_path).await.unwrap_or_default();
                     let hex_prefix: Vec<u8> = raw.iter().take(36).copied().collect();
-                    tracing::error!(
+                    tracing::warn!(
                         path = %signed_path.display(),
                         file_size = raw.len(),
                         hex_prefix = hex::encode(&hex_prefix),
-                        "corrupt .signed file for LooseCommit: {e}"
+                        "corrupt .signed file for LooseCommit — deleting so peer can re-deliver: {e}"
                     );
-                    return Err(FsStorageError::from(e));
+                    // Delete both halves so the CAS existence check no longer
+                    // blocks a clean re-write from a peer.
+                    let _ = tokio::fs::remove_file(&signed_path).await;
+                    let _ = tokio::fs::remove_file(&blob_path).await;
+                    return Ok(None);
                 }
             };
             let blob = Blob::new(blob_data);
@@ -506,7 +509,6 @@ impl Storage<Sendable> for FsStorage {
             let blob_data = verified.blob().contents().clone();
             let blob_temp = blob_path.with_extension("blob.tmp");
             let signed_temp = signed_path.with_extension("signed.tmp");
-
             tokio::fs::write(&blob_temp, &blob_data).await?;
             tokio::fs::write(&signed_temp, &signed_data).await?;
             tokio::fs::rename(&blob_temp, &blob_path).await?;
@@ -547,13 +549,17 @@ impl Storage<Sendable> for FsStorage {
                 Err(e) => {
                     let raw = tokio::fs::read(&signed_path).await.unwrap_or_default();
                     let hex_prefix: Vec<u8> = raw.iter().take(36).copied().collect();
-                    tracing::error!(
+                    tracing::warn!(
                         path = %signed_path.display(),
                         file_size = raw.len(),
                         hex_prefix = hex::encode(&hex_prefix),
-                        "corrupt .signed file for Fragment: {e}"
+                        "corrupt .signed file for Fragment — deleting so peer can re-deliver: {e}"
                     );
-                    return Err(FsStorageError::from(e));
+                    // Delete both halves so the CAS existence check no longer
+                    // blocks a clean re-write from a peer.
+                    let _ = tokio::fs::remove_file(&signed_path).await;
+                    let _ = tokio::fs::remove_file(&blob_path).await;
+                    return Ok(None);
                 }
             };
             let blob = Blob::new(blob_data);
