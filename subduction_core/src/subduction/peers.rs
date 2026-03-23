@@ -98,15 +98,13 @@ pub(crate) async fn get_authorized_subscriber_conns<
         }
     }
 
+    // Only return the HEAD connection per peer.  Returning all connections for
+    // a subscribed peer causes the same commit to be sent on every connection,
+    // producing duplicate delivery and concurrent FsStorage write collisions.
     let guard = connections.lock().await;
     authorized_peers
         .into_iter()
-        .flat_map(|pid| {
-            guard
-                .get(&pid)
-                .map(|conns| conns.iter().cloned().collect::<Vec<_>>())
-                .unwrap_or_default()
-        })
+        .filter_map(|pid| guard.get(&pid).map(|conns| conns.head.clone()))
         .collect()
 }
 

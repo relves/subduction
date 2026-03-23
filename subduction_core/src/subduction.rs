@@ -805,15 +805,21 @@ where
         peers::remove_connection(&self.connections, &self.subscriptions, conn).await
     }
 
-    /// Get all connections as a flat list.
+    /// Get one connection per peer as a flat list.
     ///
-    /// This is useful for iterating over all connections to send messages.
+    /// Returns the head (first) connection for each peer.  Only one connection
+    /// per peer is used for broadcasting to avoid duplicate message delivery
+    /// when multiple logical connections to the same peer exist (e.g. when
+    /// both peers dial each other simultaneously and end up with two
+    /// bidirectional streams).  Sending the same commit on every connection to
+    /// a peer would cause the remote side to process it multiple times, leading
+    /// to spurious FsStorage write collisions and content-loss sync loops.
     async fn all_connections(&self) -> Vec<Authenticated<C, F>> {
         self.connections
             .lock()
             .await
             .values()
-            .flat_map(|ne| ne.iter().cloned())
+            .map(|ne| ne.head.clone())
             .collect()
     }
 
@@ -1481,12 +1487,16 @@ where
         let mut stats = SyncStats::new();
         let mut had_success = false;
 
+        // Use only the head connection for this peer.  Syncing over all
+        // connections produces duplicate BatchSyncRequests which the responder
+        // handles individually, wasting bandwidth and potentially triggering
+        // concurrent FsStorage writes for the same commits.
         let peer_conns: Vec<Authenticated<C, F>> = {
             self.connections
                 .lock()
                 .await
                 .get(to_ask)
-                .map(|ne| ne.iter().cloned().collect())
+                .map(|ne| alloc::vec![ne.head.clone()])
                 .unwrap_or_default()
         };
 
